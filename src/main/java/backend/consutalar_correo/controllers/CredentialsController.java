@@ -18,7 +18,6 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/credentials")
-@CrossOrigin(origins = "http://localhost:4200")
 public class CredentialsController {
 
     private static final Logger logger = LoggerFactory.getLogger(CredentialsController.class);

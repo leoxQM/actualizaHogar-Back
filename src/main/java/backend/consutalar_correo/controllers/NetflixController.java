@@ -14,7 +14,7 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/netflix")
-@CrossOrigin(origins = "http://localhost:4200")
+//@CrossOrigin(origins = "http://localhost:4200")
 public class NetflixController {
     private static final Logger logger = LoggerFactory.getLogger(NetflixController.class);
 
