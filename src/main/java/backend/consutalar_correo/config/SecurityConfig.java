@@ -15,6 +15,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/credentials/**").permitAll() // Deja público este endpoint
                         .requestMatchers("/api/netflix/**").permitAll()
+                        .requestMatchers("/api/health").permitAll()
                         .anyRequest().authenticated() // El resto pide autenticación
                 );
 
