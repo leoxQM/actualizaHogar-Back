@@ -16,7 +16,7 @@ public class NetflixLinkResponse {
         this.success = success;
         this.netflixLink = netflixLink;
         this.email = email;
-        this.message = success ? "Enlace extraído exitosamente" : null;
+        this.message = success ? "Se encontro enlace de actualizar hogar" : null;
     }
 
     // Constructor para éxito con código temporal
@@ -25,10 +25,10 @@ public class NetflixLinkResponse {
         this.email = email;
         if (isCode) {
             this.temporaryCode = data;
-            this.message = "Código temporal extraído exitosamente";
+            this.message = "Se encontro codigo temporal";
         } else {
             this.netflixLink = data;
-            this.message = "Enlace extraído exitosamente";
+            this.message = "Se encontro enlace de actualizar hogar";
         }
     }
 
