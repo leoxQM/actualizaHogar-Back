@@ -451,26 +451,25 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
     }
 
     private String extractFourDigitCode(String pageContent) {
-        // Patrón específico: buscar después del texto completo
-        Pattern specificPattern = Pattern.compile(
-                "ingresa\\s+este\\s+c[óo]digo\\s+en\\s+el\\s+dispositivo\\s+solicitante\\s+para\\s+obtener\\s+acceso\\s+temporal[^\\d]*(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)",
+        // Patrón para código sin espacios (como en tu captura: "2830")
+        Pattern noSpacePattern = Pattern.compile(
+                "usa\\s+este\\s+c[óo]digo\\s+para\\s+ver\\s+netflix[^\\d]*(\\d{4})",
                 Pattern.CASE_INSENSITIVE | Pattern.DOTALL
         );
-        Matcher specificMatcher = specificPattern.matcher(pageContent);
-        if (specificMatcher.find()) {
-            return specificMatcher.group(1) + specificMatcher.group(2) +
-                    specificMatcher.group(3) + specificMatcher.group(4);
+        Matcher noSpaceMatcher = noSpacePattern.matcher(pageContent);
+        if (noSpaceMatcher.find()) {
+            return noSpaceMatcher.group(1);
         }
 
-        // Fallback más corto
-        Pattern fallbackPattern = Pattern.compile(
-                "(?:ingresa\\s+este\\s+c[óo]digo|acceso\\s+temporal)[^\\d]*(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)",
+        // Patrón para código con espacios (como respaldo)
+        Pattern spacedPattern = Pattern.compile(
+                "ingresa\\s+este\\s+c[óo]digo[^\\d]*(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)",
                 Pattern.CASE_INSENSITIVE | Pattern.DOTALL
         );
-        Matcher fallbackMatcher = fallbackPattern.matcher(pageContent);
-        if (fallbackMatcher.find()) {
-            return fallbackMatcher.group(1) + fallbackMatcher.group(2) +
-                    fallbackMatcher.group(3) + fallbackMatcher.group(4);
+        Matcher spacedMatcher = spacedPattern.matcher(pageContent);
+        if (spacedMatcher.find()) {
+            return spacedMatcher.group(1) + spacedMatcher.group(2) +
+                    spacedMatcher.group(3) + spacedMatcher.group(4);
         }
 
         return null;
