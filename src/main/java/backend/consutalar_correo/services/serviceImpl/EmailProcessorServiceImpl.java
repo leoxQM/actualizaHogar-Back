@@ -35,7 +35,7 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
 
     private static final Logger logger = LoggerFactory.getLogger(EmailProcessorServiceImpl.class);
 
-
+    @Autowired
     private EmailCredentialsRepository emailCredentialsRepository;
 
     @Autowired
