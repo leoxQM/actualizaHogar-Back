@@ -35,7 +35,7 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
 
     private static final Logger logger = LoggerFactory.getLogger(EmailProcessorServiceImpl.class);
 
-    @Autowired
+
     private EmailCredentialsRepository emailCredentialsRepository;
 
     @Autowired
@@ -451,22 +451,26 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
     }
 
     private String extractFourDigitCode(String pageContent) {
-        // Patrón para código espaciado
-        Pattern spacedPattern = Pattern.compile("(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)");
-        Matcher spacedMatcher = spacedPattern.matcher(pageContent);
-        if (spacedMatcher.find()) {
-            return spacedMatcher.group(1) + spacedMatcher.group(2) +
-                    spacedMatcher.group(3) + spacedMatcher.group(4);
+        // Patrón específico: buscar después del texto completo
+        Pattern specificPattern = Pattern.compile(
+                "ingresa\\s+este\\s+c[óo]digo\\s+en\\s+el\\s+dispositivo\\s+solicitante\\s+para\\s+obtener\\s+acceso\\s+temporal[^\\d]*(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL
+        );
+        Matcher specificMatcher = specificPattern.matcher(pageContent);
+        if (specificMatcher.find()) {
+            return specificMatcher.group(1) + specificMatcher.group(2) +
+                    specificMatcher.group(3) + specificMatcher.group(4);
         }
 
-        // Patrón contextual
-        Pattern contextPattern = Pattern.compile(
-                "(?:codigo|code|usa\\s+este)\\s*[:\\-]?\\s*(\\d{4})\\b",
-                Pattern.CASE_INSENSITIVE
+        // Fallback más corto
+        Pattern fallbackPattern = Pattern.compile(
+                "(?:ingresa\\s+este\\s+c[óo]digo|acceso\\s+temporal)[^\\d]*(\\d)\\s+(\\d)\\s+(\\d)\\s+(\\d)",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL
         );
-        Matcher contextMatcher = contextPattern.matcher(pageContent);
-        if (contextMatcher.find()) {
-            return contextMatcher.group(1);
+        Matcher fallbackMatcher = fallbackPattern.matcher(pageContent);
+        if (fallbackMatcher.find()) {
+            return fallbackMatcher.group(1) + fallbackMatcher.group(2) +
+                    fallbackMatcher.group(3) + fallbackMatcher.group(4);
         }
 
         return null;
