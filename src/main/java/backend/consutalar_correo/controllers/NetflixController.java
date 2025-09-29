@@ -3,6 +3,8 @@ package backend.consutalar_correo.controllers;
 import backend.consutalar_correo.dtos.EmailRequest;
 import backend.consutalar_correo.dtos.NetflixLinkResponse;
 import backend.consutalar_correo.services.EmailProcessorService;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +23,7 @@ public class NetflixController {
     @Autowired
     private EmailProcessorService emailProcessorService;
 
+    @RateLimiter(name = "netflix-service", fallbackMethod = "rateLimitFallback")
     @PostMapping("/extract-link")
     public ResponseEntity<NetflixLinkResponse> extractNetflixLink(@Valid @RequestBody EmailRequest request) {
         logger.info("Solicitud para extraer enlace de Netflix del email: {}", request.getEmail());
@@ -48,6 +51,7 @@ public class NetflixController {
         }
     }
 
+    @RateLimiter(name = "netflix-service", fallbackMethod = "rateLimitFallbackCode")
     @PostMapping("/extract-code")
     public ResponseEntity<NetflixLinkResponse> extractTemporaryCode(@Valid @RequestBody EmailRequest request) {
         logger.info("Solicitud para extraer código temporal del email: {}", request.getEmail());
@@ -62,7 +66,7 @@ public class NetflixController {
             } else {
                 logger.warn("No se encontró código temporal para: {}", request.getEmail());
                 return ResponseEntity.ok(
-                        new NetflixLinkResponse(false, "No se encontraro código temporal")
+                        new NetflixLinkResponse(false, "No se encontró código temporal")
                 );
             }
 
@@ -74,6 +78,7 @@ public class NetflixController {
         }
     }
 
+    @RateLimiter(name = "netflix-validation", fallbackMethod = "rateLimitFallbackValidation")
     @PostMapping("/validate-connection")
     public ResponseEntity<NetflixLinkResponse> validateConnection(@Valid @RequestBody EmailRequest request) {
         logger.info("Validando conexión para email: {}", request.getEmail());
@@ -97,5 +102,27 @@ public class NetflixController {
                     new NetflixLinkResponse(false, "Error validando conexión: " + e.getMessage())
             );
         }
+    }
+
+    // Fallback methods para rate limiting
+    public ResponseEntity<NetflixLinkResponse> rateLimitFallback(EmailRequest request, RequestNotPermitted ex) {
+        logger.warn("Rate limit excedido para extraer enlace: {}", request.getEmail());
+        return ResponseEntity.status(429).body(
+                new NetflixLinkResponse(false, "Límite de solicitudes excedido. Máximo 5 por minuto. Intenta nuevamente en unos minutos.")
+        );
+    }
+
+    public ResponseEntity<NetflixLinkResponse> rateLimitFallbackCode(EmailRequest request, RequestNotPermitted ex) {
+        logger.warn("Rate limit excedido para extraer código: {}", request.getEmail());
+        return ResponseEntity.status(429).body(
+                new NetflixLinkResponse(false, "Límite de solicitudes excedido. Máximo 5 por minuto. Intenta nuevamente en unos minutos.")
+        );
+    }
+
+    public ResponseEntity<NetflixLinkResponse> rateLimitFallbackValidation(EmailRequest request, RequestNotPermitted ex) {
+        logger.warn("Rate limit excedido para validación: {}", request.getEmail());
+        return ResponseEntity.status(429).body(
+                new NetflixLinkResponse(false, "Límite de validaciones excedido. Máximo 10 por minuto. Intenta nuevamente en unos minutos.")
+        );
     }
 }

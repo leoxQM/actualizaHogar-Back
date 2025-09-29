@@ -6,6 +6,7 @@ import backend.consutalar_correo.services.EmailProcessorService;
 import backend.consutalar_correo.services.EncryptionService;
 
 import jakarta.mail.*;
+import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.search.*;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -14,7 +15,6 @@ import org.jsoup.select.Elements;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -41,44 +41,28 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
     @Autowired
     private EncryptionService encryptionService;
 
-    // HTTP Client reutilizable para evitar crear múltiples instancias
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
-
-    // OPTIMIZACIÓN: Cache para credenciales (reduce consultas DB)
-    @Cacheable(value = "emailCredentials", key = "#email")
-    private Optional<EmailCredentials> getCachedCredentials(String email) {
-        return emailCredentialsRepository.findByEmail(email);
-    }
-
-    // OPTIMIZACIÓN: Cache para passwords desencriptados
-    @Cacheable(value = "encryptionCache", key = "#encryptedPassword")
-    private String getCachedDecryptedPassword(String encryptedPassword) {
-        return encryptionService.decrypt(encryptedPassword);
-    }
-
     @Override
     public Optional<String> extractNetflixHomeLink(String email) {
         try {
-            logger.info("INICIANDO PROCESO PARA: {}", email);
+            logger.info("=== INICIANDO PROCESO PARA: {} ===", email);
 
-            // Usar cache para credenciales
-            Optional<EmailCredentials> credentialsOpt = getCachedCredentials(email);
+            Optional<EmailCredentials> credentialsOpt = emailCredentialsRepository.findByEmail(email);
             if (credentialsOpt.isEmpty()) {
                 logger.warn("Credenciales no encontradas para: {}", email);
                 return Optional.empty();
             }
 
             EmailCredentials credentials = credentialsOpt.get();
-            String decryptedPassword = getCachedDecryptedPassword(credentials.getEncryptedPassword());
-            logger.info("Credenciales obtenidas desde cache");
+            String decryptedPassword = encryptionService.decrypt(credentials.getEncryptedPassword());
+            logger.info("Credenciales obtenidas y descifradas");
 
             Store store = connectToEmailServer(credentials, decryptedPassword);
-            String netflixLink = findNetflixLinkRecent(store);
-            store.close();
 
-            logger.info("PROCESO COMPLETADO");
+            String netflixLink = findNetflixLinkRecent(store);
+
+            store.close();
+            logger.info("=== PROCESO COMPLETADO ===");
+
             return Optional.ofNullable(netflixLink);
 
         } catch (Exception e) {
@@ -90,22 +74,25 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
     @Override
     public Optional<String> extractTemporaryCode(String email) {
         try {
-            logger.info("EXTRAYENDO CODIGO TEMPORAL PARA: {}", email);
+            logger.info("=== EXTRAYENDO CODIGO TEMPORAL PARA: {} ===", email);
 
-            Optional<EmailCredentials> credentialsOpt = getCachedCredentials(email);
+            Optional<EmailCredentials> credentialsOpt = emailCredentialsRepository.findByEmail(email);
             if (credentialsOpt.isEmpty()) {
                 logger.warn("Credenciales no encontradas para: {}", email);
                 return Optional.empty();
             }
 
             EmailCredentials credentials = credentialsOpt.get();
-            String decryptedPassword = getCachedDecryptedPassword(credentials.getEncryptedPassword());
+            String decryptedPassword = encryptionService.decrypt(credentials.getEncryptedPassword());
+            logger.info("Credenciales obtenidas para codigo temporal");
 
             Store store = connectToEmailServer(credentials, decryptedPassword);
-            String temporaryCode = findTemporaryCodeRecent(store);
-            store.close();
 
-            logger.info("PROCESO CODIGO COMPLETADO: {}", temporaryCode != null ? "EXITO" : "SIN RESULTADO");
+            String temporaryCode = findTemporaryCodeRecent(store);
+
+            store.close();
+            logger.info("=== PROCESO CODIGO COMPLETADO: {} ===", temporaryCode != null ? "EXITO" : "SIN RESULTADO");
+
             return Optional.ofNullable(temporaryCode);
 
         } catch (Exception e) {
@@ -114,24 +101,23 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
         }
     }
 
-    // OPTIMIZACIÓN: Cache para validaciones de conexión (evita reconectar constantemente)
-    @Cacheable(value = "connectionCache", key = "#email")
     @Override
     public boolean validateEmailConnection(String email) {
         try {
-            Optional<EmailCredentials> credentialsOpt = getCachedCredentials(email);
+            Optional<EmailCredentials> credentialsOpt = emailCredentialsRepository.findByEmail(email);
             if (credentialsOpt.isEmpty()) {
                 return false;
             }
 
             EmailCredentials credentials = credentialsOpt.get();
-            String decryptedPassword = getCachedDecryptedPassword(credentials.getEncryptedPassword());
+            String decryptedPassword = encryptionService.decrypt(credentials.getEncryptedPassword());
 
             Store store = connectToEmailServer(credentials, decryptedPassword);
             boolean isConnected = store.isConnected();
             store.close();
 
             return isConnected;
+
         } catch (Exception e) {
             logger.error("Error validando conexion para email {}: {}", email, e.getMessage());
             return false;
@@ -145,15 +131,15 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
         props.put("mail.imaps.port", credentials.getImapPort().toString());
         props.put("mail.imaps.ssl.enable", "true");
         props.put("mail.imaps.ssl.trust", "*");
-        // OPTIMIZACIÓN: Timeouts más cortos para reducir tiempo de espera
-        props.put("mail.imaps.connectiontimeout", "5000");
-        props.put("mail.imaps.timeout", "8000");
-        props.put("mail.imaps.writetimeout", "5000");
+        props.put("mail.imaps.connectiontimeout", "8000");
+        props.put("mail.imaps.timeout", "10000");
+        props.put("mail.imaps.writetimeout", "8000");
 
         Session session = Session.getInstance(props);
         Store store = session.getStore("imaps");
 
-        logger.debug("Conectando a {} ({})", credentials.getProvider(), credentials.getImapHost());
+        logger.info("Conectando a {} ({})...", credentials.getProvider(), credentials.getImapHost());
+
         store.connect(credentials.getImapHost(), credentials.getEmail(), password);
 
         return store;
@@ -163,24 +149,26 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
         Folder inbox = store.getFolder("INBOX");
         inbox.open(Folder.READ_ONLY);
 
-        logger.info("Buscando el mensaje MÁS RECIENTE (último que llegó)");
+        logger.info("Buscando emails recientes (últimos 2 días)...");
 
-        // CAMBIO: No filtrar por fecha, buscar en TODOS los mensajes para obtener el más reciente
-        Message[] allMessages = inbox.getMessages();
+        Calendar cal = Calendar.getInstance();
+        cal.add(Calendar.DAY_OF_MONTH, -2);
+        Date twoDaysAgo = cal.getTime();
 
-        if (allMessages.length == 0) {
-            logger.warn("No hay mensajes en la bandeja");
+        SearchTerm recentTerm = new ReceivedDateTerm(ComparisonTerm.GE, twoDaysAgo);
+        Message[] messages = inbox.search(recentTerm);
+
+        logger.info("Encontrados {} mensajes en los últimos 2 días", messages.length);
+
+        if (messages.length == 0) {
+            logger.warn("No se encontraron mensajes recientes");
             inbox.close(false);
             return null;
         }
 
-        // El último mensaje del array es el MÁS RECIENTE que llegó
-        Message mostRecentMessage = allMessages[allMessages.length - 1];
-
-        logger.info("Analizando ÚNICAMENTE el mensaje más reciente: #{} de {} total",
-                allMessages.length, allMessages.length);
-
-        String result = processLastMessageForHome(mostRecentMessage);
+        // Tomar solo el último mensaje
+        Message lastMessage = messages[messages.length - 1];
+        String result = processLastMessageForHome(lastMessage);
 
         inbox.close(false);
         return result;
@@ -189,36 +177,30 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
     private String processLastMessageForHome(Message msg) throws MessagingException, IOException {
         try {
             String subject = msg.getSubject();
-            Date receivedDate = msg.getReceivedDate();
-            logger.info("Analizando mensaje MÁS RECIENTE - Asunto: {} - Fecha: {}",
-                    subject != null ? subject : "Sin asunto",
-                    receivedDate != null ? receivedDate : "Sin fecha");
+            logger.info("Analizando ÚLTIMO mensaje: {}", subject != null ? subject : "Sin asunto");
 
             String content = extractMessageContent(msg);
 
             if (content != null && isHomeUpdateContent(content)) {
-                logger.info("EMAIL DE HOGAR DETECTADO en mensaje más reciente");
+                logger.info("EMAIL DE HOGAR DETECTADO");
                 String link = findNetflixUrlInContent(content);
 
                 if (link != null) {
-                    logger.info("Enlace encontrado en mensaje más reciente: {}",
-                            link.substring(0, Math.min(60, link.length())) + "...");
-
-                    if (validateNetflixHomeLinkOptimized(link)) {
-                        logger.info("ENLACE VALIDADO en mensaje más reciente");
+                    logger.info("Enlace encontrado: {}", link);
+                    if (validateNetflixHomeLink(link)) {
+                        logger.info("ENLACE VALIDADO: {}", link);
                         return link;
                     } else {
-                        logger.warn("Enlace del mensaje más reciente no es válido: sin botón 'Confirmar actualización'");
+                        logger.warn("El enlace no es válido: no contiene botón 'Confirmar actualización'");
+                        return null;
                     }
                 }
-            } else {
-                logger.info("El mensaje más reciente NO es de actualización de hogar");
             }
         } catch (Exception e) {
-            logger.warn("Error procesando mensaje más reciente: {}", e.getMessage());
+            logger.warn("Error procesando último mensaje: {}", e.getMessage());
         }
 
-        logger.warn("No se encontró enlace de hogar válido en el mensaje más reciente");
+        logger.warn("No se encontró enlace de hogar válido en el último correo");
         return null;
     }
 
@@ -226,53 +208,89 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
         Folder inbox = store.getFolder("INBOX");
         inbox.open(Folder.READ_ONLY);
 
-        logger.info("Buscando el mensaje MÁS RECIENTE para código temporal");
+        logger.info("Buscando emails de codigo temporal (ultimos 2 dias)...");
 
-        // Obtener TODOS los mensajes para encontrar el más reciente
-        Message[] allMessages = inbox.getMessages();
+        Calendar cal = Calendar.getInstance();
+        cal.add(Calendar.DAY_OF_MONTH, -2);
+        Date twoDaysAgo = cal.getTime();
 
-        if (allMessages.length == 0) {
-            logger.warn("No hay mensajes en la bandeja");
-            inbox.close(false);
-            return null;
-        }
+        SearchTerm recentTerm = new ReceivedDateTerm(ComparisonTerm.GE, twoDaysAgo);
+        Message[] messages = inbox.search(recentTerm);
 
-        // El último mensaje es el más reciente
-        Message mostRecentMessage = allMessages[allMessages.length - 1];
+        logger.info("Encontrados {} mensajes para codigo temporal", messages.length);
 
-        logger.info("Analizando ÚNICAMENTE el mensaje más reciente para código: #{} de {} total",
-                allMessages.length, allMessages.length);
-
-        String result = processLastMessageForCode(mostRecentMessage);
-
+        String result = processMessagesForCode(messages);
         inbox.close(false);
         return result;
     }
 
-    private String processLastMessageForCode(Message msg) throws MessagingException, IOException {
-        try {
-            String subject = msg.getSubject();
-            Date receivedDate = msg.getReceivedDate();
-            logger.info("Analizando mensaje MÁS RECIENTE para código - Asunto: {} - Fecha: {}",
-                    subject != null ? subject : "Sin asunto",
-                    receivedDate != null ? receivedDate : "Sin fecha");
-
-            String content = extractMessageContent(msg);
-
-            if (content != null && isTemporaryCodeContent(content)) {
-                logger.info("EMAIL DE CODIGO TEMPORAL DETECTADO en mensaje más reciente");
-                String codeUrl = findTemporaryCodeUrl(content);
-                if (codeUrl != null) {
-                    return extractCodeFromUrl(codeUrl);
-                }
-            } else {
-                logger.info("El mensaje más reciente NO es de código temporal");
-            }
-        } catch (Exception e) {
-            logger.warn("Error procesando mensaje más reciente para código: {}", e.getMessage());
+    private String processMessagesForHome(Message[] messages) throws MessagingException, IOException {
+        if (messages.length == 0) {
+            logger.warn("No hay mensajes recientes");
+            return null;
         }
 
-        logger.warn("No se encontró código temporal en el mensaje más reciente");
+        for (int i = messages.length - 1; i >= 0; i--) {
+            Message msg = messages[i];
+
+            try {
+                String subject = msg.getSubject();
+                logger.info("Analizando mensaje: {}", subject != null ? subject : "Sin asunto");
+
+                String content = extractMessageContent(msg);
+
+                if (content != null && isHomeUpdateContent(content)) {
+                    logger.info("EMAIL DE HOGAR DETECTADO");
+                    String link = findNetflixUrlInContent(content);
+                    if (link != null) {
+                        logger.info("Enlace encontrado, validando...");
+                        if (validateNetflixHomeLink(link)) {
+                            logger.info("ENLACE VALIDADO: {}", link);
+                            return link;
+                        } else {
+                            logger.warn("Enlace descartado: no contiene boton Confirmar actualización");
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("Error procesando mensaje: {}", e.getMessage());
+                continue;
+            }
+        }
+
+        logger.warn("No se encontro enlace de hogar valido");
+        return null;
+    }
+
+    private String processMessagesForCode(Message[] messages) throws MessagingException, IOException {
+        if (messages.length == 0) {
+            logger.warn("No hay mensajes recientes para codigo");
+            return null;
+        }
+
+        for (int i = messages.length - 1; i >= 0; i--) {
+            Message msg = messages[i];
+
+            try {
+                String subject = msg.getSubject();
+                logger.info("Analizando mensaje para codigo: {}", subject != null ? subject : "Sin asunto");
+
+                String content = extractMessageContent(msg);
+
+                if (content != null && isTemporaryCodeContent(content)) {
+                    logger.info("EMAIL DE CODIGO TEMPORAL DETECTADO");
+                    String codeUrl = findTemporaryCodeUrl(content);
+                    if (codeUrl != null) {
+                        return extractCodeFromUrl(codeUrl);
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("Error procesando mensaje para codigo: {}", e.getMessage());
+                continue;
+            }
+        }
+
+        logger.warn("No se encontro codigo temporal valido");
         return null;
     }
 
@@ -311,29 +329,29 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
             return null;
         }
 
-        // OPTIMIZACIÓN: Patrones más específicos basados en tu captura de pantalla
-        Pattern specificPattern = Pattern.compile(
-                "https?://(?:www\\.)?netflix\\.com/[^\\s\"'<>)]*(?:household|manage|actualizar|update|hogar|verify|confirm)[^\\s\"'<>)]*",
+        logger.debug("Buscando URLs en contenido de {} caracteres", content.length());
+
+        Pattern directPattern = Pattern.compile(
+                "https?://(?:www\\.)?netflix\\.com/[^\\s\"'<>)]*(?:home|household|manage|actualizar|update|hogar|verify|confirm)[^\\s\"'<>)]*",
                 Pattern.CASE_INSENSITIVE
         );
 
-        Matcher specificMatcher = specificPattern.matcher(content);
-        while (specificMatcher.find()) {
-            String url = specificMatcher.group();
+        Matcher directMatcher = directPattern.matcher(content);
+        while (directMatcher.find()) {
+            String url = directMatcher.group();
             if (isRelevantNetflixUrl(url)) {
-                logger.info("URL específica de hogar encontrada");
+                logger.info("URL directa de hogar encontrada");
                 return url;
             }
         }
 
-        // Patrón de respaldo para href
         Pattern hrefPattern = Pattern.compile(
-                "href=[\"'](https?://[^\"']*netflix\\.com[^\"']*(?:household|hogar|update|actualizar|manage)[^\"']*)[\"']",
+                "href=[\"'](https?://[^\"']*netflix\\.com[^\"']*)[\"']",
                 Pattern.CASE_INSENSITIVE
         );
 
         Matcher hrefMatcher = hrefPattern.matcher(content);
-        if (hrefMatcher.find()) {
+        while (hrefMatcher.find()) {
             String url = hrefMatcher.group(1);
             if (isRelevantNetflixUrl(url)) {
                 logger.info("URL de hogar en href encontrada");
@@ -341,49 +359,34 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
             }
         }
 
-        logger.debug("No se encontraron URLs específicas de actualizar hogar");
+        logger.info("No se encontraron URLs especificas de actualizar hogar");
         return null;
     }
 
-    // OPTIMIZACIÓN: Detección más específica basada en tu captura
     private boolean isHomeUpdateContent(String content) {
         String lowerContent = content.toLowerCase();
 
-        // Palabras clave específicas de la página que mostraste
-        String[] specificKeywords = {
-                "completa la actualización del hogar",
-                "confirma que quieres configurar tu hogar",
-                "actualización podría limitar",
-                "dispositivos que no sean parte del hogar"
-        };
-
-        // Si encuentra cualquier frase específica, es definitivamente un email de hogar
-        for (String specific : specificKeywords) {
-            if (lowerContent.contains(specific)) {
-                logger.info("Email de hogar confirmado por frase específica: {}", specific);
-                return true;
-            }
-        }
-
-        // Fallback a palabras generales
         String[] requiredKeywords = {"hogar", "actualizar", "household", "solicitud", "dispositivos"};
+
         int keywordCount = 0;
         for (String keyword : requiredKeywords) {
             if (lowerContent.contains(keyword)) {
                 keywordCount++;
+                logger.debug("Palabra clave encontrada: {}", keyword);
             }
         }
 
-        boolean isRelevant = keywordCount >= 3; // Aumentado de 2 a 3 para mayor precisión
-        logger.debug("Contenido de hogar por palabras generales: {} ({}/{})",
-                isRelevant, keywordCount, requiredKeywords.length);
+        boolean isRelevant = keywordCount >= 2;
+        logger.info("Contenido de hogar: {} (palabras clave: {}/{})",
+                isRelevant ? "SI" : "NO", keywordCount, requiredKeywords.length);
 
         return isRelevant;
     }
 
     private boolean isRelevantNetflixUrl(String url) {
         String lowerUrl = url.toLowerCase();
-        return lowerUrl.contains("household") ||
+        return lowerUrl.contains("home") ||
+                lowerUrl.contains("household") ||
                 lowerUrl.contains("manage") ||
                 lowerUrl.contains("update") ||
                 lowerUrl.contains("hogar") ||
@@ -394,6 +397,7 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
 
     private boolean isTemporaryCodeContent(String content) {
         String lowerContent = content.toLowerCase();
+
         String[] codeKeywords = {"codigo", "temporal", "acceso", "obtener", "dispositivo", "ver netflix"};
 
         int keywordCount = 0;
@@ -403,7 +407,9 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
             }
         }
 
-        return keywordCount >= 2;
+        boolean isCode = keywordCount >= 2;
+        logger.debug("Contenido de codigo: {} (palabras: {}/{})", isCode, keywordCount, codeKeywords.length);
+        return isCode;
     }
 
     private String findTemporaryCodeUrl(String content) {
@@ -414,7 +420,9 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
 
         Matcher codeButtonMatcher = codeButtonPattern.matcher(content);
         if (codeButtonMatcher.find()) {
-            return codeButtonMatcher.group(1);
+            String url = codeButtonMatcher.group(1);
+            logger.info("URL del boton obtener codigo encontrada");
+            return url;
         }
 
         Pattern codePattern = Pattern.compile(
@@ -424,30 +432,50 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
 
         Matcher codeMatcher = codePattern.matcher(content);
         if (codeMatcher.find()) {
-            return codeMatcher.group(1);
+            String url = codeMatcher.group(1);
+            logger.info("URL relacionada con codigo encontrada");
+            return url;
         }
 
+        logger.warn("No se encontro URL de codigo temporal");
         return null;
     }
 
     private String extractCodeFromUrl(String url) {
         try {
+            logger.info("Obteniendo codigo desde: {}", url);
+
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(8))
+                    .build();
+
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(10))
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .timeout(Duration.ofSeconds(12))
+                    .header("User-Agent", "Mozilla/5.0")
                     .GET()
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() == 200) {
-                return extractFourDigitCode(response.body());
+                String code = extractFourDigitCode(response.body());
+                if (code != null) {
+                    logger.info("CODIGO EXTRAIDO: {}", code);
+                    return code;
+                } else {
+                    logger.warn("No se pudo extraer codigo de la pagina");
+                    return null;
+                }
+            } else {
+                logger.error("Error HTTP {}", response.statusCode());
+                return null;
             }
+
         } catch (Exception e) {
             logger.error("Error obteniendo codigo: {}", e.getMessage());
+            return null;
         }
-        return null;
     }
 
     private String extractFourDigitCode(String pageContent) {
@@ -471,50 +499,39 @@ public class EmailProcessorServiceImpl implements EmailProcessorService {
             return spacedMatcher.group(1) + spacedMatcher.group(2) +
                     spacedMatcher.group(3) + spacedMatcher.group(4);
         }
-
         return null;
     }
 
-    // OPTIMIZACIÓN: Validación más eficiente con timeout corto
-    private boolean validateNetflixHomeLinkOptimized(String url) {
+    // ================= NUEVO MÉTODO =================
+    private boolean validateNetflixHomeLink(String url) {
         try {
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(8))
+                    .build();
+
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(8)) // Timeout reducido
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .timeout(Duration.ofSeconds(12))
+                    .header("User-Agent", "Mozilla/5.0")
                     .GET()
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() == 200) {
-                // OPTIMIZACIÓN: Usar búsqueda de texto simple antes de parsear HTML
-                String bodyLower = response.body().toLowerCase();
-
-                if (bodyLower.contains("confirmar actualización") ||
-                        bodyLower.contains("confirm update") ||
-                        bodyLower.contains("completa la actualización del hogar")) {
-                    logger.debug("Validación rápida exitosa por contenido de texto");
-                    return true;
-                }
-
-                // Solo parsear HTML si la búsqueda rápida no funciona
                 Document doc = Jsoup.parse(response.body());
-                Elements buttons = doc.select("button, a, input[type=submit]");
+                Elements buttons = doc.select("button, a");
 
                 for (Element btn : buttons) {
                     String text = btn.text().trim().toLowerCase();
-                    if (text.contains("confirmar actualización") ||
-                            text.contains("confirmar") && text.contains("hogar")) {
-                        logger.debug("Botón de confirmación detectado en HTML");
+                    if (text.contains("confirmar actualización")) {
+                        logger.info("Botón 'Confirmar actualización' detectado en el enlace");
                         return true;
                     }
                 }
-            } else {
-                logger.warn("HTTP {}: Enlace posiblemente expirado", response.statusCode());
             }
         } catch (Exception e) {
-            logger.error("Error validando enlace Netflix: {}", e.getMessage());
+            logger.error("Error validando link Netflix: {}", e.getMessage());
         }
         return false;
     }
